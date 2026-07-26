@@ -43,7 +43,7 @@ def transcribe_audio_gemini(oga_bytes):
                             }
                         },
                         {
-                            "text": "Расшифруй это аудиосообщение на русском языке. Верни ТОЛЬКО точный текст сказанного без дополнительных комментариев."
+                            "text": "Transcribe este mensaje de audio con precisión en el idioma hablado (español, inglés o ruso). Devuelve ÚNICAMENTE el texto exacto dicho en el audio, sin comentarios adicionales ni introducciones."
                         }
                     ]
                 }
@@ -59,7 +59,7 @@ def transcribe_audio_gemini(oga_bytes):
                 if parts:
                     return parts[0].get("text", "").strip()
     except Exception as e:
-        print(f"❌ Ошибка расшифровки Gemini: {e}")
+        print(f"❌ Error al transcribir con Gemini: {e}")
     return None
 
 def download_telegram_file(file_path):
@@ -69,7 +69,7 @@ def download_telegram_file(file_path):
         with urllib.request.urlopen(req, context=ctx) as response:
             return response.read()
     except Exception as e:
-        print(f"❌ Ошибка скачивания файла {file_path}: {e}")
+        print(f"❌ Error descargando archivo {file_path}: {e}")
         return None
 
 def get_telegram_file_path(file_id):
@@ -81,10 +81,10 @@ def get_telegram_file_path(file_id):
             if res.get("ok"):
                 return res.get("result", {}).get("file_path")
     except Exception as e:
-        print(f"❌ Ошибка получения file_path: {e}")
+        print(f"❌ Error obteniendo file_path: {e}")
     return None
 
-def add_item_to_notion_inbox(text, source_type="text", msg_timestamp=None):
+def add_item_to_notion_inbox(text, source_type="text", msg_timestamp=None, sender_name=None):
     url = f"https://api.notion.com/v1/blocks/{NOTION_INBOX_ID}/children"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
@@ -100,7 +100,8 @@ def add_item_to_notion_inbox(text, source_type="text", msg_timestamp=None):
         dt = datetime.now(tz=timezone(timedelta(hours=-5)))
 
     now_str = dt.strftime("%d.%m %H:%M")
-    bullet_text = f"{icon_emoji} [{now_str}] {text}"
+    author_prefix = f" [{sender_name}]" if sender_name else ""
+    bullet_text = f"{icon_emoji} [{now_str}]{author_prefix} {text}"
 
     payload = {
         "children": [
@@ -123,10 +124,10 @@ def add_item_to_notion_inbox(text, source_type="text", msg_timestamp=None):
     try:
         with urllib.request.urlopen(req, context=ctx) as response:
             if response.status in (200, 201):
-                print(f"✅ Сохранено в Notion Inbox: {bullet_text}")
+                print(f"✅ Guardado en Notion Inbox: {bullet_text}")
                 return True
     except Exception as e:
-        print(f"❌ Ошибка отправки в Notion: {e}")
+        print(f"❌ Error al enviar a Notion: {e}")
         return False
 
 def send_telegram_message(chat_id, text):
@@ -141,10 +142,10 @@ def send_telegram_message(chat_id, text):
     try:
         urllib.request.urlopen(req, context=ctx)
     except Exception as e:
-        print(f"❌ Ошибка отправки в Telegram: {e}")
+        print(f"❌ Error al enviar mensaje a Telegram: {e}")
 
 def run_telegram_bot():
-    print("🚀 Облачный Бот TEJA VUH 24/7 запущен!")
+    print("🚀 Bot en la nube TEJA VUH 24/7 iniciado en español!")
     offset = 0
     while True:
         try:
@@ -158,6 +159,7 @@ def run_telegram_bot():
                     message = update.get("message", {})
                     chat_id = message.get("chat", {}).get("id")
                     msg_date = message.get("date")
+                    sender_name = message.get("from", {}).get("first_name") or "Usuario"
                     
                     if not chat_id:
                         continue
@@ -166,18 +168,18 @@ def run_telegram_bot():
                     if "text" in message:
                         user_text = message["text"]
                         if user_text.startswith("/start"):
-                            send_telegram_message(chat_id, "👋 Привет! Я ваш голосовой ИИ-помощник TEJA VUH. Наговаривайте голосовые сообщения или пишите текстом — я расшифрую голос и отправлю аккуратную задачу в ваш Notion Inbox!")
+                            send_telegram_message(chat_id, "👋 ¡Hola! Soy tu asistente de voz de IA para TEJA VUH.\n\nEnvía mensajes de voz o escribe notas en texto. ¡Transcribiré tu voz y guardaré una nota ordenada en tu Notion Inbox!")
                             continue
                         
-                        if add_item_to_notion_inbox(user_text, "text", msg_date):
-                            send_telegram_message(chat_id, f"✅ Текстовая задача сохранена в Notion Inbox!\n\n💡 {user_text}")
+                        if add_item_to_notion_inbox(user_text, "text", msg_date, sender_name):
+                            send_telegram_message(chat_id, f"✅ ¡Nota de texto guardada en Notion Inbox!\n\n💡 {user_text}")
 
                     # 2. Голосовые сообщения
                     elif "voice" in message or "audio" in message:
                         voice_info = message.get("voice") or message.get("audio")
                         file_id = voice_info.get("file_id")
                         
-                        send_telegram_message(chat_id, "🎙️ Расшифровываю голос...")
+                        send_telegram_message(chat_id, "🎙️ Transcribiendo mensaje de voz...")
                         
                         file_path = get_telegram_file_path(file_id)
                         if file_path:
@@ -185,16 +187,16 @@ def run_telegram_bot():
                             if audio_bytes:
                                 transcribed_text = transcribe_audio_gemini(audio_bytes)
                                 if transcribed_text:
-                                    add_item_to_notion_inbox(transcribed_text, "voice", msg_date)
-                                    send_telegram_message(chat_id, f"✅ Голосовая запись расшифрована и сохранена в Notion Inbox!\n\n🎙️ {transcribed_text}")
+                                    add_item_to_notion_inbox(transcribed_text, "voice", msg_date, sender_name)
+                                    send_telegram_message(chat_id, f"✅ ¡Nota de voz transcribida y guardada en Notion Inbox!\n\n🎙️ {transcribed_text}")
                                 else:
-                                    fallback = "Голосовая заметка (не удалось разобрать слова)"
-                                    add_item_to_notion_inbox(fallback, "voice", msg_date)
-                                    send_telegram_message(chat_id, "⚠️ Запись сохранена, но расшифровка не удалась.")
+                                    fallback = "Nota de voz (no se pudo reconocer la voz)"
+                                    add_item_to_notion_inbox(fallback, "voice", msg_date, sender_name)
+                                    send_telegram_message(chat_id, "⚠️ Se guardó la nota de voz, pero no se pudo transcribir el audio.")
                             else:
-                                send_telegram_message(chat_id, "❌ Не удалось скачать аудиофайл.")
+                                send_telegram_message(chat_id, "❌ No se pudo descargar el archivo de audio.")
                         else:
-                            send_telegram_message(chat_id, "❌ Не удалось получить файл с сервера Telegram.")
+                            send_telegram_message(chat_id, "❌ No se pudo obtener el archivo del servidor de Telegram.")
 
         except Exception as e:
             print(f"⚠️ Ошибка поллинга: {e}")
