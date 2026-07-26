@@ -5,7 +5,9 @@ import base64
 import urllib.request
 import urllib.error
 import ssl
-from datetime import datetime
+import threading
+from datetime import datetime, timezone, timedelta
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8878684146:AAF7BgYn--MszhQxU3F4mx0_Qyw1YueCZIQ")
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "ntn_" + "261270948384dzEroLYe0I68u6AU72CW5RRU7YWHshM4Eu")
@@ -15,6 +17,16 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6JkYBUpsrDcb9G8YGHKPV
 ctx = ssl.create_default_context()
 ctx.check_hostname = False
 ctx.verify_mode = ssl.CERT_NONE
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, format, *args):
+        return  # Suppress logs
 
 def transcribe_audio_gemini(oga_bytes):
     try:
@@ -72,7 +84,7 @@ def get_telegram_file_path(file_id):
         print(f"❌ Ошибка получения file_path: {e}")
     return None
 
-def add_item_to_notion_inbox(text, source_type="text"):
+def add_item_to_notion_inbox(text, source_type="text", msg_timestamp=None):
     url = f"https://api.notion.com/v1/blocks/{NOTION_INBOX_ID}/children"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
@@ -81,7 +93,13 @@ def add_item_to_notion_inbox(text, source_type="text"):
     }
 
     icon_emoji = "💡" if source_type == "text" else "🎙️"
-    now_str = datetime.now().strftime("%d.%m %H:%M")
+    
+    if msg_timestamp:
+        dt = datetime.fromtimestamp(msg_timestamp, tz=timezone(timedelta(hours=-5)))
+    else:
+        dt = datetime.now(tz=timezone(timedelta(hours=-5)))
+
+    now_str = dt.strftime("%d.%m %H:%M")
     bullet_text = f"{icon_emoji} [{now_str}] {text}"
 
     payload = {
@@ -139,6 +157,7 @@ def run_telegram_bot():
                     offset = update["update_id"] + 1
                     message = update.get("message", {})
                     chat_id = message.get("chat", {}).get("id")
+                    msg_date = message.get("date")
                     
                     if not chat_id:
                         continue
@@ -150,7 +169,7 @@ def run_telegram_bot():
                             send_telegram_message(chat_id, "👋 Привет! Я ваш голосовой ИИ-помощник TEJA VUH. Наговаривайте голосовые сообщения или пишите текстом — я расшифрую голос и отправлю аккуратную задачу в ваш Notion Inbox!")
                             continue
                         
-                        if add_item_to_notion_inbox(user_text, "text"):
+                        if add_item_to_notion_inbox(user_text, "text", msg_date):
                             send_telegram_message(chat_id, f"✅ Текстовая задача сохранена в Notion Inbox!\n\n💡 {user_text}")
 
                     # 2. Голосовые сообщения
@@ -166,11 +185,11 @@ def run_telegram_bot():
                             if audio_bytes:
                                 transcribed_text = transcribe_audio_gemini(audio_bytes)
                                 if transcribed_text:
-                                    add_item_to_notion_inbox(transcribed_text, "voice")
+                                    add_item_to_notion_inbox(transcribed_text, "voice", msg_date)
                                     send_telegram_message(chat_id, f"✅ Голосовая запись расшифрована и сохранена в Notion Inbox!\n\n🎙️ {transcribed_text}")
                                 else:
                                     fallback = "Голосовая заметка (не удалось разобрать слова)"
-                                    add_item_to_notion_inbox(fallback, "voice")
+                                    add_item_to_notion_inbox(fallback, "voice", msg_date)
                                     send_telegram_message(chat_id, "⚠️ Запись сохранена, но расшифровка не удалась.")
                             else:
                                 send_telegram_message(chat_id, "❌ Не удалось скачать аудиофайл.")
@@ -183,5 +202,11 @@ def run_telegram_bot():
 
         time.sleep(0.5)
 
+# Run Telegram bot in background thread
+threading.Thread(target=run_telegram_bot, daemon=True).start()
+
 if __name__ == "__main__":
-    run_telegram_bot()
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🌐 Running Health Check Server on port {port}...")
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
