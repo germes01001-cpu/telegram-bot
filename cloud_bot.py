@@ -1,33 +1,20 @@
 import os
-import sys
 import json
 import time
 import base64
 import urllib.request
 import urllib.error
 import ssl
-import threading
 from datetime import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8878684146:AAF7BgYn--MszhQxU3F4mx0_Qyw1YueCZIQ")
-NOTION_API_KEY = os.environ.get("NOTION_API_KEY", ""ntn_" + "261270948384dzEroLYe0I68u6AU72CW5RRU7YWHshM4Eu"")
+NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "ntn_" + "261270948384dzEroLYe0I68u6AU72CW5RRU7YWHshM4Eu")
 NOTION_INBOX_ID = os.environ.get("NOTION_INBOX_ID", "3a76154bd4368016858ec7ef7b8afebc")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6JkYBUpsrDcb9G8YGHKPVjd4Km-LE1jgpsKF5Zw5fSBtA")
 
 ctx = ssl.create_default_context()
 ctx.check_hostname = False
 ctx.verify_mode = ssl.CERT_NONE
-
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(b"TEJA VUH Bot 24/7 is active!")
-
-    def log_message(self, format, *args):
-        return  # Suppress HTTP access logs
 
 def transcribe_audio_gemini(oga_bytes):
     try:
@@ -138,8 +125,8 @@ def send_telegram_message(chat_id, text):
     except Exception as e:
         print(f"❌ Ошибка отправки в Telegram: {e}")
 
-def run_telegram_polling():
-    print(f"🚀 Автономный Telegram Bot 24/7 запущен!")
+def run_telegram_bot():
+    print("🚀 Облачный Бот TEJA VUH 24/7 запущен!")
     offset = 0
     while True:
         try:
@@ -160,11 +147,11 @@ def run_telegram_polling():
                     if "text" in message:
                         user_text = message["text"]
                         if user_text.startswith("/start"):
-                            send_telegram_message(chat_id, "👋 Привет! Я ваш голосовой ИИ-помощник TEJA VUH.\n\nНаговаривайте голосовые сообщения или пишите текстом — я расшифрую голос и отправлю аккуратную задачу в ваш Notion Inbox!")
+                            send_telegram_message(chat_id, "👋 Привет! Я ваш голосовой ИИ-помощник TEJA VUH. Наговаривайте голосовые сообщения или пишите текстом — я расшифрую голос и отправлю аккуратную задачу в ваш Notion Inbox!")
                             continue
                         
                         if add_item_to_notion_inbox(user_text, "text"):
-                            send_telegram_message(chat_id, f"✅ Текстовая задача сохранена в Notion Inbox!\n\n💡 \"{user_text}\"")
+                            send_telegram_message(chat_id, f"✅ Текстовая задача сохранена в Notion Inbox!\n\n💡 {user_text}")
 
                     # 2. Голосовые сообщения
                     elif "voice" in message or "audio" in message:
@@ -180,7 +167,7 @@ def run_telegram_polling():
                                 transcribed_text = transcribe_audio_gemini(audio_bytes)
                                 if transcribed_text:
                                     add_item_to_notion_inbox(transcribed_text, "voice")
-                                    send_telegram_message(chat_id, f"✅ Голосовая запись расшифрована и сохранена в Notion Inbox!\n\n🎙️ \"{transcribed_text}\"")
+                                    send_telegram_message(chat_id, f"✅ Голосовая запись расшифрована и сохранена в Notion Inbox!\n\n🎙️ {transcribed_text}")
                                 else:
                                     fallback = "Голосовая заметка (не удалось разобрать слова)"
                                     add_item_to_notion_inbox(fallback, "voice")
@@ -196,11 +183,5 @@ def run_telegram_polling():
 
         time.sleep(0.5)
 
-# Запускаем фоновый поток поллинга Telegram
-threading.Thread(target=run_telegram_polling, daemon=True).start()
-
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    print(f"🌐 HTTP Health Check Server running on port {port}...")
-    server.serve_forever()
+    run_telegram_bot()
