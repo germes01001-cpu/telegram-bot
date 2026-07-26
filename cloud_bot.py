@@ -26,7 +26,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"OK")
 
     def log_message(self, format, *args):
-        return  # Suppress logs
+        return
 
 def transcribe_audio_gemini(oga_bytes):
     models = ["gemini-flash-lite-latest", "gemini-2.0-flash-lite", "gemini-2.5-flash-lite"]
@@ -65,8 +65,8 @@ def transcribe_audio_gemini(oga_bytes):
                             if text:
                                 return text
             except urllib.error.HTTPError as e:
-                print(f"⚠️ HTTP {e.code} en modelo {model_name} (intento {attempt+1}): {e}")
-                time.sleep(2)
+                print(f"⚠️ HTTP {e.code} en modelo {model_name}: {e}")
+                time.sleep(1)
             except Exception as e:
                 print(f"⚠️ Error en modelo {model_name}: {e}")
                 time.sleep(1)
