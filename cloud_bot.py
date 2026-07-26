@@ -29,37 +29,47 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         return  # Suppress logs
 
 def transcribe_audio_gemini(oga_bytes):
-    try:
-        audio_b64 = base64.b64encode(oga_bytes).decode("utf-8")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={GEMINI_API_KEY}"
-        body = {
-            "contents": [
-                {
-                    "parts": [
+    models = ["gemini-flash-lite-latest", "gemini-2.0-flash-lite", "gemini-2.5-flash-lite"]
+    audio_b64 = base64.b64encode(oga_bytes).decode("utf-8")
+    
+    for model_name in models:
+        for attempt in range(3):
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+                body = {
+                    "contents": [
                         {
-                            "inline_data": {
-                                "mime_type": "audio/ogg",
-                                "data": audio_b64
-                            }
-                        },
-                        {
-                            "text": "Transcribe este mensaje de audio con precisión en el idioma hablado (español, inglés o ruso). Devuelve ÚNICAMENTE el texto exacto dicho en el audio, sin comentarios adicionales ni introducciones."
+                            "parts": [
+                                {
+                                    "inline_data": {
+                                        "mime_type": "audio/ogg",
+                                        "data": audio_b64
+                                    }
+                                },
+                                {
+                                    "text": "Transcribe este mensaje de audio con precisión en el idioma hablado (español, inglés o ruso). Devuelve ÚNICAMENTE el texto exacto dicho en el audio, sin comentarios adicionales ni introducciones."
+                                }
+                            ]
                         }
                     ]
                 }
-            ]
-        }
-        data = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, context=ctx) as response:
-            res = json.loads(response.read().decode("utf-8"))
-            candidates = res.get("candidates", [])
-            if candidates:
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if parts:
-                    return parts[0].get("text", "").strip()
-    except Exception as e:
-        print(f"❌ Error al transcribir con Gemini: {e}")
+                data = json.dumps(body).encode("utf-8")
+                req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, context=ctx) as response:
+                    res = json.loads(response.read().decode("utf-8"))
+                    candidates = res.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            text = parts[0].get("text", "").strip()
+                            if text:
+                                return text
+            except urllib.error.HTTPError as e:
+                print(f"⚠️ HTTP {e.code} en modelo {model_name} (intento {attempt+1}): {e}")
+                time.sleep(2)
+            except Exception as e:
+                print(f"⚠️ Error en modelo {model_name}: {e}")
+                time.sleep(1)
     return None
 
 def download_telegram_file(file_path):
