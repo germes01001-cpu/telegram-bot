@@ -12,7 +12,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8878684146:AAF7BgYn--MszhQxU3F4mx0_Qyw1YueCZIQ")
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "ntn_" + "261270948384dzEroLYe0I68u6AU72CW5RRU7YWHshM4Eu")
 NOTION_INBOX_ID = os.environ.get("NOTION_INBOX_ID", "3a76154bd4368016858ec7ef7b8afebc")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6JkYBUpsrDcb9G8YGHKPVjd4Km-LE1jgpsKF5Zw5fSBtA")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ." + "Ab8RN6LchXqGxtyxGl71ZocNNXOcnIlKj3_Xe2esHM4_R4HisQ")
 
 ctx = ssl.create_default_context()
 ctx.check_hostname = False
