@@ -23,10 +23,24 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write(b"OK")
+        self.wfile.write(b"OK - TEJA VUH Ideas Bot Active")
 
     def log_message(self, format, *args):
         return
+
+def self_keep_alive(port):
+    """Pings local health check server every 3 minutes so Render free container never sleeps."""
+    time.sleep(10)
+    print(f"⏰ Self-Keep-Alive active on port {port}!")
+    while True:
+        try:
+            url = f"http://127.0.0.1:{port}/"
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=3) as response:
+                pass
+        except Exception as e:
+            pass
+        time.sleep(180)
 
 def transcribe_audio_gemini(oga_bytes):
     models = ["gemini-1.5-flash", "gemini-2.0-flash-lite", "gemini-2.5-flash-lite"]
@@ -171,7 +185,7 @@ def process_voice_async(chat_id, file_id, msg_date, sender_name):
         send_telegram_message(chat_id, "❌ No se pudo obtener el archivo del servidor de Telegram.")
 
 def run_telegram_bot():
-    print("🚀 Bot en la nube TEJA VUH 24/7 (Modo 100% Асинхронный) iniciado!")
+    print("🚀 Bot en la nube TEJA VUH 24/7 (Modo 100% Вечный Неусыпаемый) iniciado!")
     offset = 0
     while True:
         try:
@@ -218,5 +232,6 @@ threading.Thread(target=run_telegram_bot, daemon=True).start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Running Health Check Server on port {port}...")
+    threading.Thread(target=self_keep_alive, args=(port,), daemon=True).start()
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
