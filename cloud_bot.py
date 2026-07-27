@@ -43,7 +43,7 @@ def self_keep_alive(port):
         time.sleep(180)
 
 def transcribe_audio_gemini(oga_bytes):
-    models = ["gemini-1.5-flash", "gemini-2.0-flash-lite", "gemini-2.5-flash-lite"]
+    models = ["gemini-flash-lite-latest", "gemini-flash-latest"]
     audio_b64 = base64.b64encode(oga_bytes).decode("utf-8")
     
     for model_name in models:
