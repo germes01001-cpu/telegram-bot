@@ -53,7 +53,6 @@ def parse_gdrive_folder(url):
             if titles:
                 main_title = titles[0].replace(" - Google Drive", "").strip()
             
-            # Extract names from Google Drive stream data
             raw_names = re.findall(r"\[\"([A-Za-z0-9_\-\s\.]{3,60})\",\[\"application/vnd\.google-apps\.folder\"\]", html)
             if raw_names:
                 subfolders = list(set(raw_names))
@@ -129,14 +128,14 @@ def run_photo_bot():
                                 "👋 *¡Hola! Soy tu Bot Oficial de Fotos para TEJA VUH.*\n\n"
                                 "📸 *¿Cómo trabajar conmigo?:*\n"
                                 "1. Sube tus nuevas carpetas de fotos a Google Drive.\n"
-                                "2. Escríbeme o envía un enlace de Google Drive.\n"
-                                "3. Escanearé todas las carpetas y crearé la galería de vista previa en Notion de forma transparente."
+                                "2. Escríbeme cualquier mensaje o palabra.\n"
+                                "3. Escanearé tu carpeta fijada de Google Drive y actualizaré Notion."
                             )
                             send_telegram_message(chat_id, msg)
                             continue
 
                         target_url = user_text if "drive.google.com" in user_text else MAIN_GDRIVE_URL
-                        send_telegram_message(chat_id, "📸 *Escaneando carpetas en Google Drive y creando vista previa en Notion...*")
+                        send_telegram_message(chat_id, "📸 *Escaneando tu carpeta fija en Google Drive y actualizando Notion...*")
                         
                         main_title, subfolders = parse_gdrive_folder(target_url)
                         
@@ -167,5 +166,11 @@ def run_photo_bot():
 
         time.sleep(0.5)
 
+# Run polling loop in background thread
+threading.Thread(target=run_photo_bot, daemon=True).start()
+
 if __name__ == "__main__":
-    run_photo_bot()
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🌐 Running Health Check Server on port {port}...")
+    server = HTTPServer(("0.0.0.0", port), PhotoHealthHandler)
+    server.serve_forever()
