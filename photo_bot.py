@@ -141,7 +141,7 @@ def sync_subfolder_to_notion(sf_data):
             res = json.loads(response.read().decode("utf-8"))
             new_page_id = res.get("id")
             
-            # Batch append all visual image blocks in chunks of 20
+            # Batch append all visual image blocks in chunks of 20 with DIRECT FILE DOWNLOAD LINKS
             batch_size = 20
             for start in range(0, count, batch_size):
                 chunk = file_ids[start:start+batch_size]
@@ -149,6 +149,9 @@ def sync_subfolder_to_notion(sf_data):
                 for idx, f_id in enumerate(chunk):
                     global_idx = start + idx + 1
                     thumb_url = f"https://drive.google.com/thumbnail?id={f_id}&sz=w400"
+                    # DIRECT FILE DOWNLOAD / VIEW LINK specifically for this file ID!
+                    direct_download_url = f"https://drive.google.com/uc?export=download&id={f_id}"
+                    
                     batch_children.append({
                         "object": "block",
                         "type": "image",
@@ -163,7 +166,7 @@ def sync_subfolder_to_notion(sf_data):
                         "paragraph": {
                             "rich_text": [
                                 {"type": "text", "text": {f"content": f"📷 Foto #{global_idx} de {count} | "}},
-                                {"type": "text", "text": {"content": "Скачать оригинал", "link": {"url": url_link}}}
+                                {"type": "text", "text": {"content": "📥 Скачать этот оригинал", "link": {"url": direct_download_url}}}
                             ]
                         }
                     })
@@ -194,14 +197,14 @@ def process_sync_async(chat_id):
             "✅ *INFORME DE SINCRONIZACIÓN AUTOMÁTICA DE FOTOS*\n\n"
             f"📊 *Total de фотосессий синхронизировано:* `{len(synced_names)}`\n\n"
             f"{list_str}\n\n"
-            "✨ *¡Todas las tarjetas reales y vistas previas ya están disponibles en tu Galería de Notion!*"
+            "✨ *¡Todas las tarjetas reales y descargas directas ya están listas en tu Galería de Notion!*"
         )
         send_telegram_message(chat_id, report)
     else:
         send_telegram_message(chat_id, "⚠️ *No se detectaron subcarpetas nuevas en tu Google Drive.*")
 
 def run_photo_bot():
-    print("🚀 TEJA VUH Photo Sync Bot iniciado 24/7 (Modo 100% Автономный Telegram Bot)!")
+    print("🚀 TEJA VUH Photo Sync Bot iniciado 24/7 (Modo Descarga Directa de Файла)!")
     offset = 0
     while True:
         try:
@@ -227,7 +230,7 @@ def run_photo_bot():
                                 "📸 *¿Cómo trabajar conmigo?:*\n"
                                 "1. Sube tus carpetas a Google Drive `TejaVuh Photo`.\n"
                                 "2. Envíame cualquier mensaje o `/sync`.\n"
-                                "3. Escanearé todas tus carpetas reales y crearé las galerías en Notion automáticamente."
+                                "3. Escanearé todas tus carpetas reales y crearé las galerías con descarga directa en Notion."
                             )
                             send_telegram_message(chat_id, msg)
                             continue
