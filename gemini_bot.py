@@ -308,10 +308,13 @@ def run_telegram_bot():
             time.sleep(2)
         time.sleep(0.5)
 
+def start_bot():
+    threading.Thread(target=run_telegram_bot, daemon=True).start()
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Running Health Check Server on port {port}...")
-    threading.Thread(target=run_telegram_bot, daemon=True).start()
+    start_bot()
     threading.Thread(target=self_keep_alive, args=(port,), daemon=True).start()
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()

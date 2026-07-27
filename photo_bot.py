@@ -272,11 +272,12 @@ def run_photo_bot():
 
         time.sleep(0.5)
 
-# Run polling loop in background thread
-threading.Thread(target=run_photo_bot, daemon=True).start()
+def start_bot():
+    threading.Thread(target=run_photo_bot, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Running Health Check Server on port {port}...")
+    start_bot()
     server = HTTPServer(("0.0.0.0", port), PhotoHealthHandler)
     server.serve_forever()
