@@ -42,30 +42,18 @@ def send_telegram_message(chat_id, text):
     except Exception as e:
         print(f"❌ Error enviando a Telegram Photo Bot: {e}")
 
-def parse_gdrive_folder(url):
-    subfolders = []
-    main_title = "TejaVuh / FOTOS"
+def fetch_real_gdrive_title(url):
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
         with urllib.request.urlopen(req, context=ctx) as r:
             html = r.read().decode("utf-8", errors="ignore")
             titles = re.findall(r"<title>(.*?)</title>", html)
             if titles:
-                main_title = titles[0].replace(" - Google Drive", "").strip()
-            
-            raw_names = re.findall(r"\[\"([A-Za-z0-9_\-\s\.]{3,60})\",\[\"application/vnd\.google-apps\.folder\"\]", html)
-            if raw_names:
-                subfolders = list(set(raw_names))
+                clean_title = titles[0].replace(" - Google Drive", "").strip()
+                return clean_title
     except Exception as e:
-        print(f"⚠️ Error escaneando Google Drive: {e}")
-    
-    if not subfolders:
-        subfolders = [
-            "01_Productos_Frascos_y_Mezclas",
-            "02_Ceremonias_de_Te_Pisac",
-            "03_Ubicacion_y_Ambiente_Cusco"
-        ]
-    return main_title, subfolders
+        print(f"⚠️ Error leyendo Google Drive: {e}")
+    return "TejaVuh / FOTOS"
 
 def create_notion_photo_entry(folder_url, photoshoot_name):
     url = "https://api.notion.com/v1/pages"
@@ -79,7 +67,7 @@ def create_notion_photo_entry(folder_url, photoshoot_name):
         "icon": {"type": "emoji", "emoji": "📸"},
         "properties": {
             "Название Фотосессии": {
-                "title": [{"type": "text", "text": {"content": f"📸 {photoshoot_name}"}}]
+                "title": [{"type": "text", "text": {"content": photoshoot_name}}]
             },
             "Ссылка на Google Диск": {
                 "url": folder_url
@@ -88,7 +76,7 @@ def create_notion_photo_entry(folder_url, photoshoot_name):
                 "select": {"name": "📣 D. Маркетинг"}
             },
             "Статус Обработки": {
-                "select": {"name": "Превью Готово 📸"}
+                "select": {"name": "Загружено на Google Диск 📁"}
             }
         }
     }
@@ -103,7 +91,7 @@ def create_notion_photo_entry(folder_url, photoshoot_name):
         return None
 
 def run_photo_bot():
-    print("🚀 TEJA VUH Photo Sync Bot iniciado en español!")
+    print("🚀 TEJA VUH Photo Sync Bot iniciado en español (Modo Limpio)!")
     offset = 0
     while True:
         try:
@@ -127,38 +115,32 @@ def run_photo_bot():
                             msg = (
                                 "👋 *¡Hola! Soy tu Bot Oficial de Fotos para TEJA VUH.*\n\n"
                                 "📸 *¿Cómo trabajar conmigo?:*\n"
-                                "1. Sube tus nuevas carpetas de fotos a Google Drive.\n"
-                                "2. Escríbeme cualquier mensaje o palabra.\n"
-                                "3. Escanearé tu carpeta fijada de Google Drive y actualizaré Notion."
+                                "1. Sube tu carpeta de fotos a tu Google Drive `TejaVuh Photo`.\n"
+                                "2. Envíame un mensaje o comando.\n"
+                                "3. Sincronizaré tu carpeta real exactamente en Notion."
                             )
                             send_telegram_message(chat_id, msg)
                             continue
 
                         target_url = user_text if "drive.google.com" in user_text else MAIN_GDRIVE_URL
-                        send_telegram_message(chat_id, "📸 *Escaneando tu carpeta fija en Google Drive y actualizando Notion...*")
+                        send_telegram_message(chat_id, "📸 *Sincronizando tu carpeta real de Google Drive en Notion...*")
                         
-                        main_title, subfolders = parse_gdrive_folder(target_url)
+                        real_title = fetch_real_gdrive_title(target_url)
                         
-                        created_count = 0
-                        folder_list_str = ""
-                        for sub in subfolders:
-                            p_id = create_notion_photo_entry(target_url, sub)
-                            if p_id:
-                                created_count += 1
-                                folder_list_str += f"• 📁 `{sub}`\n"
+                        p_id = create_notion_photo_entry(target_url, real_title)
                         
-                        if created_count > 0:
+                        if p_id:
                             report = (
-                                "✅ *INFORME DE SINCRONIZACIÓN DE FOTOS*\n\n"
-                                f"📂 *Carpeta Principal:* `{main_title}`\n"
-                                f"📊 *Total de carpetas detectadas:* `{created_count}`\n\n"
-                                "📁 *Carpetas añadidas a Notion:*\n"
-                                f"{folder_list_str}\n"
-                                "✨ *¡Las vistas previas ya están disponibles en tu Galería de Notion!*"
+                                "✅ *INFORME DE SINCRONIZACIÓN REAL*\n\n"
+                                f"📂 *Carpeta Principal:* `{real_title}`\n"
+                                "📊 *Total de carpetas sincronizadas:* `1` (Real)\n\n"
+                                "📁 *Carpeta añadida a Notion:*\n"
+                                f"• 📁 `{real_title}`\n\n"
+                                "✨ *¡La tarjeta real ya está creada en tu Galería de Notion!*"
                             )
                             send_telegram_message(chat_id, report)
                         else:
-                            send_telegram_message(chat_id, "⚠️ *No se pudieron crear las tarjetas en Notion. Revisa los permisos.*")
+                            send_telegram_message(chat_id, "⚠️ *No se pudo crear la tarjeta en Notion. Revisa los permisos.*")
 
         except Exception as e:
             print(f"⚠️ Error en Photo Bot: {e}")
