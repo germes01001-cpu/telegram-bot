@@ -42,13 +42,33 @@ def send_telegram_message(chat_id, text):
     except Exception as e:
         print(f"❌ Error enviando a Telegram Photo Bot: {e}")
 
+def get_existing_notion_titles():
+    url = f"https://api.notion.com/v1/databases/{NOTION_MEDIA_DB_ID}/query"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    req = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
+    existing_titles = set()
+    try:
+        with urllib.request.urlopen(req, context=ctx) as response:
+            res = json.loads(response.read().decode("utf-8"))
+            for page in res.get("results", []):
+                props = page.get("properties", {})
+                title_prop = props.get("Название Фотосессии", {}).get("title", [])
+                if title_prop:
+                    existing_titles.add(title_prop[0].get("text", {}).get("content", "").strip())
+    except Exception as e:
+        print(f"⚠️ Error al consultar títulos existentes en Notion: {e}")
+    return existing_titles
+
 def get_all_subfolders_and_files(main_url):
     results = []
     try:
         req = urllib.request.Request(main_url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
         with urllib.request.urlopen(req, context=ctx) as r:
             html = r.read().decode("utf-8", errors="ignore")
-            # Extract subfolder IDs
             raw_subfolders = re.findall(r"\"([A-Za-z0-9_\-]{33})\"", html)
             clean_subfolders = [s for s in set(raw_subfolders) if s != "1F4bG6AA8huu2Co7wcbF4es4yGJ15fdhX"]
             
@@ -60,6 +80,7 @@ def get_all_subfolders_and_files(main_url):
                         sf_html = r_sf.read().decode("utf-8", errors="ignore")
                         titles = re.findall(r"<title>(.*?)</title>", sf_html)
                         sf_title = titles[0].replace(" - Google Drive", "").strip() if titles else f"Sesion_{sf_id[:6]}"
+                        sf_title = sf_title.replace("&amp;", "&")
                         
                         file_ids = list(set(re.findall(r"\"([0-9A-Za-z_\-]{33})\"", sf_html)))
                         clean_file_ids = [f for f in file_ids if f not in ("1F4bG6AA8huu2Co7wcbF4es4yGJ15fdhX", sf_id)]
@@ -70,9 +91,9 @@ def get_all_subfolders_and_files(main_url):
                             "file_ids": clean_file_ids
                         })
                 except Exception as e_sf:
-                    print(f"⚠️ Error reading subfolder {sf_id}: {e_sf}")
+                    print(f"⚠️ Error leyendo subcarpeta {sf_id}: {e_sf}")
     except Exception as e:
-        print(f"⚠️ Error parsing main Drive folder: {e}")
+        print(f"⚠️ Error al escanear carpeta principal: {e}")
     return results
 
 def sync_subfolder_to_notion(sf_data):
@@ -141,7 +162,7 @@ def sync_subfolder_to_notion(sf_data):
             res = json.loads(response.read().decode("utf-8"))
             new_page_id = res.get("id")
             
-            # Batch append all visual image blocks in chunks of 20 with DIRECT FILE DOWNLOAD LINKS
+            # Batch append all visual image blocks in chunks of 20 with DIRECT SINGLE FILE VIEW/DOWNLOAD LINK!
             batch_size = 20
             for start in range(0, count, batch_size):
                 chunk = file_ids[start:start+batch_size]
@@ -149,8 +170,8 @@ def sync_subfolder_to_notion(sf_data):
                 for idx, f_id in enumerate(chunk):
                     global_idx = start + idx + 1
                     thumb_url = f"https://drive.google.com/thumbnail?id={f_id}&sz=w400"
-                    # DIRECT FILE DOWNLOAD / VIEW LINK specifically for this file ID!
-                    direct_download_url = f"https://drive.google.com/uc?export=download&id={f_id}"
+                    # DIRECT VIEW LINK SPECIFICALLY FOR THIS FILE ID!
+                    single_file_url = f"https://drive.google.com/file/d/{f_id}/view?usp=sharing"
                     
                     batch_children.append({
                         "object": "block",
@@ -166,7 +187,7 @@ def sync_subfolder_to_notion(sf_data):
                         "paragraph": {
                             "rich_text": [
                                 {"type": "text", "text": {f"content": f"📷 Foto #{global_idx} de {count} | "}},
-                                {"type": "text", "text": {"content": "📥 Скачать этот оригинал", "link": {"url": direct_download_url}}}
+                                {"type": "text", "text": {"content": "📥 Открыть / Скачать именно это фото", "link": {"url": single_file_url}}}
                             ]
                         }
                     })
@@ -183,28 +204,35 @@ def sync_subfolder_to_notion(sf_data):
 def process_sync_async(chat_id):
     send_telegram_message(chat_id, "📸 *¡Escaneando tu Google Drive en tiempo real y creando galerías en Notion!...*")
     
+    existing_titles = get_existing_notion_titles()
     subfolders = get_all_subfolders_and_files(MAIN_GDRIVE_URL)
     synced_names = []
     
     for sf in subfolders:
+        title = sf["title"]
+        if title in existing_titles:
+            print(f"⏭️ Omitiendo subcarpeta existente: {title}")
+            synced_names.append(f"• 📁 `{title}` ({len(sf['file_ids'])} fotos) _(Ya existente)_")
+            continue
+            
         p_id = sync_subfolder_to_notion(sf)
         if p_id:
-            synced_names.append(f"• 📁 `{sf['title']}` ({len(sf['file_ids'])} fotos)")
+            synced_names.append(f"• 📁 `{title}` ({len(sf['file_ids'])} fotos) ✨ _(Nueva)_")
             
     if synced_names:
         list_str = "\n".join(synced_names)
         report = (
             "✅ *INFORME DE SINCRONIZACIÓN AUTOMÁTICA DE FOTOS*\n\n"
-            f"📊 *Total de фотосессий синхронизировано:* `{len(synced_names)}`\n\n"
+            f"📊 *Total de carpetas en tu Google Drive:* `{len(subfolders)}`\n\n"
             f"{list_str}\n\n"
-            "✨ *¡Todas las tarjetas reales y descargas directas ya están listas en tu Galería de Notion!*"
+            "✨ *¡Todas las tarjetas reales y descargas directas están listas sin duplicados en tu Galería de Notion!*"
         )
         send_telegram_message(chat_id, report)
     else:
-        send_telegram_message(chat_id, "⚠️ *No se detectaron subcarpetas nuevas en tu Google Drive.*")
+        send_telegram_message(chat_id, "⚠️ *No se detectaron subcarpetas en tu Google Drive.*")
 
 def run_photo_bot():
-    print("🚀 TEJA VUH Photo Sync Bot iniciado 24/7 (Modo Descarga Directa de Файла)!")
+    print("🚀 TEJA VUH Photo Sync Bot iniciado 24/7 (Modo Без дубликатов + Ссылка на конкретный файл)!")
     offset = 0
     while True:
         try:
@@ -230,7 +258,7 @@ def run_photo_bot():
                                 "📸 *¿Cómo trabajar conmigo?:*\n"
                                 "1. Sube tus carpetas a Google Drive `TejaVuh Photo`.\n"
                                 "2. Envíame cualquier mensaje o `/sync`.\n"
-                                "3. Escanearé todas tus carpetas reales y crearé las galerías con descarga directa en Notion."
+                                "3. Escanearé tus carpetas y crearé las galerías sin duplicados en Notion."
                             )
                             send_telegram_message(chat_id, msg)
                             continue
