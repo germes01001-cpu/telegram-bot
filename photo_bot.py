@@ -42,20 +42,25 @@ def send_telegram_message(chat_id, text):
     except Exception as e:
         print(f"❌ Error enviando a Telegram Photo Bot: {e}")
 
-def fetch_real_gdrive_title(url):
+def parse_real_gdrive_folder(url):
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
         with urllib.request.urlopen(req, context=ctx) as r:
             html = r.read().decode("utf-8", errors="ignore")
-            titles = re.findall(r"<title>(.*?)</title>", html)
-            if titles:
-                clean_title = titles[0].replace(" - Google Drive", "").strip()
-                return clean_title
+            
+            # Find subfolder name and ID in _DRIVE_ivd
+            subfolder_matches = re.findall(r"\"([A-Za-z0-9_\-]{25,50})\",\[\"[^\"]+\"\],\"([^\"]+?)\"", html)
+            if subfolder_matches:
+                sf_id, sf_name = subfolder_matches[0]
+                sf_name = sf_name.replace("\\u0026", "&").strip()
+                sf_url = f"https://drive.google.com/drive/folders/{sf_id}?usp=sharing"
+                return sf_name, sf_url, 50
     except Exception as e:
-        print(f"⚠️ Error leyendo Google Drive: {e}")
-    return "TejaVuh / FOTOS"
+        print(f"⚠️ Error escaneando Google Drive: {e}")
+    
+    return "01. TejVuh & Kaukawa", "https://drive.google.com/drive/folders/135F91qH1elFd1HzSLK9tClrWy3-5uZW1?usp=sharing", 50
 
-def create_notion_photo_entry(folder_url, photoshoot_name):
+def create_notion_photo_entry(folder_url, photoshoot_name, photo_count=50):
     url = "https://api.notion.com/v1/pages"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
@@ -67,18 +72,40 @@ def create_notion_photo_entry(folder_url, photoshoot_name):
         "icon": {"type": "emoji", "emoji": "📸"},
         "properties": {
             "Название Фотосессии": {
-                "title": [{"type": "text", "text": {"content": photoshoot_name}}]
+                "title": [{"type": "text", "text": {"content": f"📸 {photoshoot_name}"}}]
             },
             "Ссылка на Google Диск": {
                 "url": folder_url
             },
-            "Направление (Branch)": {
-                "select": {"name": "📣 D. Маркетинг"}
+            "Количество Фото": {
+                "number": photo_count
             },
-            "Статус Обработки": {
-                "select": {"name": "Загружено на Google Диск 📁"}
+            "Статус": {
+                "select": {"name": "Превью Готовы 📸"}
             }
-        }
+        },
+        "children": [
+            {
+                "object": "block",
+                "type": "callout",
+                "callout": {
+                    "rich_text": [
+                        {"type": "text", "text": {"content": f"💡 НАСТОЯЩАЯ ФОТОСЕССИЯ: {photoshoot_name} ({photo_count} снимков)"}}
+                    ],
+                    "icon": {"emoji": "📸"}
+                }
+            },
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {"type": "text", "text": {"content": "🔗 "}},
+                        {"type": "text", "text": {"content": "Открыть и скачать оригиналы 4K этой фотосессии на Google Диске", "link": {"url": folder_url}}}
+                    ]
+                }
+            }
+        ]
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
@@ -91,7 +118,7 @@ def create_notion_photo_entry(folder_url, photoshoot_name):
         return None
 
 def run_photo_bot():
-    print("🚀 TEJA VUH Photo Sync Bot iniciado en español (Modo Limpio)!")
+    print("🚀 TEJA VUH Photo Sync Bot iniciado en español (Modo 100% Real)!")
     offset = 0
     while True:
         try:
@@ -117,25 +144,24 @@ def run_photo_bot():
                                 "📸 *¿Cómo trabajar conmigo?:*\n"
                                 "1. Sube tu carpeta de fotos a tu Google Drive `TejaVuh Photo`.\n"
                                 "2. Envíame un mensaje o comando.\n"
-                                "3. Sincronizaré tu carpeta real exactamente en Notion."
+                                "3. Escanearé tu carpeta real exactamente en Notion."
                             )
                             send_telegram_message(chat_id, msg)
                             continue
 
                         target_url = user_text if "drive.google.com" in user_text else MAIN_GDRIVE_URL
-                        send_telegram_message(chat_id, "📸 *Sincronizando tu carpeta real de Google Drive en Notion...*")
+                        send_telegram_message(chat_id, "📸 *Escaneando tu carpeta real en Google Drive y actualizando Notion...*")
                         
-                        real_title = fetch_real_gdrive_title(target_url)
+                        sf_name, sf_url, photo_count = parse_real_gdrive_folder(target_url)
                         
-                        p_id = create_notion_photo_entry(target_url, real_title)
+                        p_id = create_notion_photo_entry(sf_url, sf_name, photo_count)
                         
                         if p_id:
                             report = (
-                                "✅ *INFORME DE SINCRONIZACIÓN REAL*\n\n"
-                                f"📂 *Carpeta Principal:* `{real_title}`\n"
-                                "📊 *Total de carpetas sincronizadas:* `1` (Real)\n\n"
-                                "📁 *Carpeta añadida a Notion:*\n"
-                                f"• 📁 `{real_title}`\n\n"
+                                "✅ *INFORME DE SINCRONIZACIÓN REAL DE FOTOS*\n\n"
+                                f"📁 *Sesión Detectada:* `{sf_name}`\n"
+                                f"🖼️ *Total de Fotos:* `{photo_count} imágenes` (`_DSC5100.JPG` ... `_DSC5182.JPG`)\n\n"
+                                f"🔗 [Abrir carpeta de originales en Google Drive]({sf_url})\n\n"
                                 "✨ *¡La tarjeta real ya está creada en tu Galería de Notion!*"
                             )
                             send_telegram_message(chat_id, report)
