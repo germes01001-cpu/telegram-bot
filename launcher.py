@@ -22,7 +22,8 @@ def self_keep_alive(port):
     import urllib.request
     while True:
         try:
-            url = f"http://127.0.0.1:{port}/"
+            # Ping Render's external URL to keep the load balancer awake
+            url = os.environ.get("RENDER_EXTERNAL_URL", f"http://127.0.0.1:{port}/")
             req = urllib.request.Request(url)
             with urllib.request.urlopen(req, timeout=3) as response:
                 pass
