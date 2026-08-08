@@ -224,7 +224,6 @@ def get_folder_items(service, folder_id):
 
 def build_hierarchy(service, folder_id, folder_name, depth=2):
     items = get_folder_items(service, folder_id)
-    blocks = []
     photos = []
     folders = []
     
@@ -234,15 +233,31 @@ def build_hierarchy(service, folder_id, folder_name, depth=2):
         elif item['mimeType'].startswith('image/'):
             photos.append(item)
             
-    total_photos = len(photos)
+    # Process subfolders recursively first
+    sub_blocks = []
+    total_sub_photos = 0
+    for folder in folders:
+        s_blocks, s_photos = build_hierarchy(service, folder['id'], folder['name'], depth + 1)
+        sub_blocks.extend(s_blocks)
+        total_sub_photos += s_photos
+        
+    total_photos = len(photos) + total_sub_photos
     
+    # Skip empty folder branches
+    if total_photos == 0 and depth > 1:
+        return [], 0
+        
+    blocks = []
+    
+    # Generate heading with correct total
     if depth > 1:
         heading_type = f"heading_{min(depth, 3)}"
+        prefix = "📁 " if depth == 2 else ("📂 " if depth == 3 else "📄 ")
         blocks.append({
             "object": "block",
             "type": heading_type,
             heading_type: {
-                "rich_text": [{"type": "text", "text": {"content": f"{folder_name} ({len(photos)} fotos)"}}]
+                "rich_text": [{"type": "text", "text": {"content": f"{prefix}{folder_name} ({total_photos} fotos)"}}]
             }
         })
         
@@ -260,16 +275,14 @@ def build_hierarchy(service, folder_id, folder_name, depth=2):
             "type": "paragraph",
             "paragraph": {
                 "rich_text": [
-                    {"type": "text", "text": {"content": f"Foto #{i+1} de {len(photos)} | "}},
+                    {"type": "text", "text": {"content": f"Foto #{i+1} de {len(photos)} en {folder_name} | "}},
                     {"type": "text", "text": {"content": "Abrir / Descargar", "link": {"url": single_file_url}}}
                 ]
             }
         })
 
-    for folder in folders:
-        sub_blocks, sub_photos = build_hierarchy(service, folder['id'], folder['name'], depth + 1)
-        blocks.extend(sub_blocks)
-        total_photos += sub_photos
+    # Add subfolder blocks
+    blocks.extend(sub_blocks)
         
     return blocks, total_photos
 
