@@ -2,16 +2,18 @@ import os
 import json
 import time
 import urllib.request
-import urllib.error
-import ssl
-import re
-from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import re
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+import ssl
 
-PHOTO_TELEGRAM_TOKEN = os.environ.get("PHOTO_TELEGRAM_TOKEN", "8956431737:AAFChcOziYoqpVdSioF2OLlCN-NXE-iSZtk")
-NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "ntn_" + "261270948384dzEroLYe0I68u6AU72CW5RRU7YWHshM4Eu")
+PHOTO_TELEGRAM_TOKEN = os.environ.get("PHOTO_TELEGRAM_TOKEN")
+NOTION_API_KEY = os.environ.get("NOTION_API_KEY")
 NOTION_MEDIA_DB_ID = os.environ.get("NOTION_MEDIA_DB_ID", "3a96154b-d436-810e-a991-ca006eab15e7")
-MAIN_GDRIVE_URL = "https://drive.google.com/drive/folders/1F4bG6AA8huu2Co7wcbF4es4yGJ15fdhX?usp=sharing"
+ROOT_FOLDER_ID = "1F4bG6AA8huu2Co7wcbF4es4yGJ15fdhX"
+CREDENTIALS_FILE = "google_credentials.json"
 
 ctx = ssl.create_default_context()
 ctx.check_hostname = False
@@ -40,9 +42,14 @@ def send_telegram_message(chat_id, text):
     try:
         urllib.request.urlopen(req, context=ctx)
     except Exception as e:
-        print(f"❌ Error enviando a Telegram Photo Bot: {e}")
+        print(f"❌ Error enviando a Telegram: {e}")
 
-def get_existing_notion_titles():
+def get_drive_service():
+    scopes = ['https://www.googleapis.com/auth/drive.readonly']
+    creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
+    return build('drive', 'v3', credentials=creds)
+
+def get_notion_pages():
     url = f"https://api.notion.com/v1/databases/{NOTION_MEDIA_DB_ID}/query"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
@@ -50,189 +57,223 @@ def get_existing_notion_titles():
         "Content-Type": "application/json"
     }
     req = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
-    existing_titles = set()
+    pages = {}
     try:
         with urllib.request.urlopen(req, context=ctx) as response:
             res = json.loads(response.read().decode("utf-8"))
             for page in res.get("results", []):
+                page_id = page["id"]
                 props = page.get("properties", {})
-                title_prop = props.get("Название Фотосессии", {}).get("title", [])
-                if title_prop:
-                    existing_titles.add(title_prop[0].get("text", {}).get("content", "").strip())
+                url_prop = props.get("Ссылка на Google Диск", {}).get("url", "")
+                if url_prop:
+                    match = re.search(r'folders/([a-zA-Z0-9_-]+)', url_prop)
+                    if match:
+                        folder_id = match.group(1)
+                        pages[folder_id] = page_id
     except Exception as e:
-        print(f"⚠️ Error al consultar títulos existentes en Notion: {e}")
-    return existing_titles
+        print(f"⚠️ Error querying Notion: {e}")
+    return pages
 
-def get_all_subfolders_and_files(main_url):
-    results = []
+def archive_notion_page(page_id):
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    payload = {"archived": True}
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="PATCH")
     try:
-        req = urllib.request.Request(main_url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
-        with urllib.request.urlopen(req, context=ctx) as r:
-            html = r.read().decode("utf-8", errors="ignore")
-            raw_subfolders = re.findall(r"\"([A-Za-z0-9_\-]{33})\"", html)
-            clean_subfolders = [s for s in set(raw_subfolders) if s != "1F4bG6AA8huu2Co7wcbF4es4yGJ15fdhX"]
-            
-            for sf_id in clean_subfolders:
-                sf_url = f"https://drive.google.com/drive/folders/{sf_id}?usp=sharing"
-                req_sf = urllib.request.Request(sf_url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
-                try:
-                    with urllib.request.urlopen(req_sf, context=ctx) as r_sf:
-                        sf_html = r_sf.read().decode("utf-8", errors="ignore")
-                        titles = re.findall(r"<title>(.*?)</title>", sf_html)
-                        sf_title = titles[0].replace(" - Google Drive", "").strip() if titles else f"Sesion_{sf_id[:6]}"
-                        sf_title = sf_title.replace("&amp;", "&")
-                        
-                        file_ids = list(set(re.findall(r"\"([0-9A-Za-z_\-]{33})\"", sf_html)))
-                        clean_file_ids = [f for f in file_ids if f not in ("1F4bG6AA8huu2Co7wcbF4es4yGJ15fdhX", sf_id)]
-                        
-                        results.append({
-                            "title": sf_title,
-                            "url": sf_url,
-                            "file_ids": clean_file_ids
-                        })
-                except Exception as e_sf:
-                    print(f"⚠️ Error leyendo subcarpeta {sf_id}: {e_sf}")
+        urllib.request.urlopen(req, context=ctx)
     except Exception as e:
-        print(f"⚠️ Error al escanear carpeta principal: {e}")
-    return results
+        print(f"❌ Error archiving Notion page {page_id}: {e}")
 
-def sync_subfolder_to_notion(sf_data):
-    title = sf_data["title"]
-    url_link = sf_data["url"]
-    file_ids = sf_data["file_ids"]
-    count = len(file_ids)
-    
-    first_thumb = f"https://drive.google.com/thumbnail?id={file_ids[0]}&sz=w400" if file_ids else ""
-    
+def create_notion_page(title, folder_id, count, first_thumb):
     url = "https://api.notion.com/v1/pages"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
         "Notion-Version": "2022-06-28",
         "Content-Type": "application/json"
     }
-    
+    folder_url = f"https://drive.google.com/drive/folders/{folder_id}?usp=sharing"
     page_payload = {
         "parent": {"type": "database_id", "database_id": NOTION_MEDIA_DB_ID},
         "icon": {"type": "emoji", "emoji": "📸"},
-        "cover": {
-            "type": "external",
-            "external": {"url": first_thumb}
-        },
+        "cover": {"type": "external", "external": {"url": first_thumb}} if first_thumb else None,
         "properties": {
-            "Название Фотосессии": {
-                "title": [{"type": "text", "text": {"content": title}}]
-            },
-            "Ссылка на Google Диск": {
-                "url": url_link
-            },
-            "Количество Фото": {
-                "number": count
-            },
-            "Статус": {
-                "select": {"name": "Превью Готовы 📸"}
-            }
+            "Название Фотосессии": {"title": [{"type": "text", "text": {"content": title}}]},
+            "Ссылка на Google Диск": {"url": folder_url},
+            "Количество Фото": {"number": count},
+            "Статус": {"select": {"name": "Превью Готовы 📸"}}
         },
         "children": [
             {
                 "object": "block",
                 "type": "callout",
                 "callout": {
-                    "rich_text": [
-                        {"type": "text", "text": {"content": f"💡 FOTO SESIÓN REAL: {title} ({count} fotos en total)"}}
-                    ],
+                    "rich_text": [{"type": "text", "text": {"content": f"💡 FOTO SESIÓN REAL: {title} ({count} fotos en total)"}}],
                     "icon": {"emoji": "📸"}
-                }
-            },
-            {
-                "object": "block",
-                "type": "heading_2",
-                "heading_2": {
-                    "rich_text": [
-                        {"type": "text", "text": {"content": f"🖼️ Vista previa de imágenes ({count} archivos)"}}
-                    ]
                 }
             }
         ]
     }
-    
+    if not page_payload["cover"]:
+        del page_payload["cover"]
+
     data = json.dumps(page_payload).encode("utf-8")
-    req_p = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req_p, context=ctx) as response:
+        with urllib.request.urlopen(req, context=ctx) as response:
             res = json.loads(response.read().decode("utf-8"))
-            new_page_id = res.get("id")
-            
-            # Batch append all visual image blocks in chunks of 20 with DIRECT SINGLE FILE VIEW/DOWNLOAD LINK!
-            batch_size = 20
-            for start in range(0, count, batch_size):
-                chunk = file_ids[start:start+batch_size]
-                batch_children = []
-                for idx, f_id in enumerate(chunk):
-                    global_idx = start + idx + 1
-                    thumb_url = f"https://drive.google.com/thumbnail?id={f_id}&sz=w400"
-                    # DIRECT VIEW LINK SPECIFICALLY FOR THIS FILE ID!
-                    single_file_url = f"https://drive.google.com/file/d/{f_id}/view?usp=sharing"
-                    
-                    batch_children.append({
-                        "object": "block",
-                        "type": "image",
-                        "image": {
-                            "type": "external",
-                            "external": {"url": thumb_url}
-                        }
-                    })
-                    batch_children.append({
-                        "object": "block",
-                        "type": "paragraph",
-                        "paragraph": {
-                            "rich_text": [
-                                {"type": "text", "text": {f"content": f"📷 Foto #{global_idx} de {count} | "}},
-                                {"type": "text", "text": {"content": "📥 Открыть / Скачать именно это фото", "link": {"url": single_file_url}}}
-                            ]
-                        }
-                    })
-                
-                b_data = json.dumps({"children": batch_children}).encode("utf-8")
-                req_b = urllib.request.Request(url=f"https://api.notion.com/v1/blocks/{new_page_id}/children", data=b_data, headers=headers, method="PATCH")
-                urllib.request.urlopen(req_b, context=ctx)
-                
-            return new_page_id
+            return res.get("id")
     except Exception as e:
-        print(f"❌ Error creando sesión {title} en Notion: {e}")
+        print(f"❌ Error creating Notion page for {title}: {e}")
         return None
 
-def process_sync_async(chat_id):
-    send_telegram_message(chat_id, "📸 *¡Escaneando tu Google Drive en tiempo real y creando galerías en Notion!...*")
+def append_notion_blocks(page_id, blocks):
+    url = f"https://api.notion.com/v1/blocks/{page_id}/children"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    batch_size = 50
+    for start in range(0, len(blocks), batch_size):
+        chunk = blocks[start:start+batch_size]
+        data = json.dumps({"children": chunk}).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method="PATCH")
+        try:
+            urllib.request.urlopen(req, context=ctx)
+        except Exception as e:
+            print(f"❌ Error appending blocks to {page_id}: {e}")
+
+def get_folder_items(service, folder_id):
+    items = []
+    page_token = None
+    while True:
+        results = service.files().list(
+            q=f"'{folder_id}' in parents and trashed = false",
+            fields="nextPageToken, files(id, name, mimeType, thumbnailLink)",
+            pageToken=page_token,
+            pageSize=1000
+        ).execute()
+        items.extend(results.get('files', []))
+        page_token = results.get('nextPageToken')
+        if not page_token:
+            break
+    return items
+
+def build_hierarchy(service, folder_id, folder_name, depth=2):
+    items = get_folder_items(service, folder_id)
+    blocks = []
+    photos = []
+    folders = []
     
-    existing_titles = get_existing_notion_titles()
-    subfolders = get_all_subfolders_and_files(MAIN_GDRIVE_URL)
-    synced_names = []
+    for item in items:
+        if item['mimeType'] == 'application/vnd.google-apps.folder':
+            folders.append(item)
+        elif item['mimeType'].startswith('image/'):
+            photos.append(item)
+            
+    total_photos = len(photos)
     
-    for sf in subfolders:
-        title = sf["title"]
-        if title in existing_titles:
-            print(f"⏭️ Omitiendo subcarpeta existente: {title}")
-            synced_names.append(f"• 📁 `{title}` ({len(sf['file_ids'])} fotos) _(Ya existente)_")
-            continue
+    if depth > 1: # Don't add a header for the root session itself
+        heading_type = f"heading_{min(depth, 3)}"
+        blocks.append({
+            "object": "block",
+            "type": heading_type,
+            heading_type: {
+                "rich_text": [{"type": "text", "text": {"content": f"📁 {folder_name} ({len(photos)} fotos)"}}]
+            }
+        })
+        
+    for i, photo in enumerate(photos):
+        thumb = photo.get('thumbnailLink', '').replace('=s220', '=w400')
+        if not thumb:
+            thumb = f"https://drive.google.com/thumbnail?id={photo['id']}&sz=w400"
+        single_file_url = f"https://drive.google.com/file/d/{photo['id']}/view?usp=sharing"
+        blocks.append({
+            "object": "block",
+            "type": "image",
+            "image": {"type": "external", "external": {"url": thumb}}
+        })
+        blocks.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [
+                    {"type": "text", "text": {"content": f"📷 Foto #{i+1} de {len(photos)} | "}},
+                    {"type": "text", "text": {"content": "📥 Открыть / Скачать", "link": {"url": single_file_url}}}
+                ]
+            }
+        })
+
+    for folder in folders:
+        sub_blocks, sub_photos = build_hierarchy(service, folder['id'], folder['name'], depth + 1)
+        blocks.extend(sub_blocks)
+        total_photos += sub_photos
+        
+    return blocks, total_photos
+
+def sync_all(chat_id):
+    send_telegram_message(chat_id, "📸 *Iniciando sincronización profunda de Google Drive a Notion...*")
+    try:
+        service = get_drive_service()
+        notion_pages = get_notion_pages() # folder_id -> page_id
+        
+        sessions = get_folder_items(service, ROOT_FOLDER_ID)
+        session_folders = [s for s in sessions if s['mimeType'] == 'application/vnd.google-apps.folder']
+        current_session_ids = set([s['id'] for s in session_folders])
+        
+        # 1. Archive deleted sessions
+        archived_count = 0
+        for g_id, p_id in notion_pages.items():
+            if g_id not in current_session_ids:
+                archive_notion_page(p_id)
+                archived_count += 1
+                print(f"Archived Notion page {p_id} (Folder {g_id} not found in GDrive)")
+        
+        # 2. Sync active sessions
+        synced_names = []
+        for session in session_folders:
+            s_id = session['id']
+            s_name = session['name']
             
-        p_id = sync_subfolder_to_notion(sf)
-        if p_id:
-            synced_names.append(f"• 📁 `{title}` ({len(sf['file_ids'])} fotos) ✨ _(Nueva)_")
+            if s_id in notion_pages:
+                print(f"Session {s_name} already exists. Skipping full rebuild to avoid rate limits.")
+                synced_names.append(f"• 📁 `{s_name}` _(Ya existe)_")
+                continue
+                
+            blocks, total_photos = build_hierarchy(service, s_id, s_name, depth=1)
             
-    if synced_names:
-        list_str = "\n".join(synced_names)
-        report = (
-            "✅ *INFORME DE SINCRONIZACIÓN AUTOMÁTICA DE FOTOS*\n\n"
-            f"📊 *Total de carpetas en tu Google Drive:* `{len(subfolders)}`\n\n"
-            f"{list_str}\n\n"
-            "✨ *¡Todas las tarjetas reales y descargas directas están listas sin duplicados en tu Galería de Notion!*"
+            first_thumb = ""
+            for b in blocks:
+                if b["type"] == "image":
+                    first_thumb = b["image"]["external"]["url"]
+                    break
+                    
+            p_id = create_notion_page(s_name, s_id, total_photos, first_thumb)
+            if p_id:
+                append_notion_blocks(p_id, blocks)
+                synced_names.append(f"• 📁 `{s_name}` ({total_photos} fotos) ✨ _(Sincronizado)_")
+                
+        msg = (
+            "✅ *SINCRONIZACIÓN COMPLETADA*\n\n"
+            f"🗑️ Sesiones archivadas (borradas en Drive): `{archived_count}`\n"
+            f"📊 Total sesiones actuales: `{len(session_folders)}`\n\n"
+            + "\n".join(synced_names)
         )
-        send_telegram_message(chat_id, report)
-    else:
-        send_telegram_message(chat_id, "⚠️ *No se detectaron subcarpetas en tu Google Drive.*")
+        send_telegram_message(chat_id, msg)
+        
+    except Exception as e:
+        send_telegram_message(chat_id, f"❌ Error en sincronización: {e}")
+        print(f"Error: {e}")
+
+def process_sync_async(chat_id):
+    threading.Thread(target=sync_all, args=(chat_id,), daemon=True).start()
 
 def run_photo_bot():
-    print("🚀 TEJA VUH Photo Sync Bot iniciado 24/7 (Modo Без дубликатов + Ссылка на конкретный файл)!")
+    print("🚀 TEJA VUH Photo Sync Bot iniciado (Google Drive API + Subfolders + Auto-Delete)!")
     offset = 0
     while True:
         try:
@@ -251,25 +292,12 @@ def run_photo_bot():
 
                     if "text" in message:
                         user_text = message["text"].strip()
-                        
                         if user_text.startswith("/start") or user_text.startswith("/help"):
-                            msg = (
-                                "👋 *¡Hola! Soy tu Bot Oficial de Fotos para TEJA VUH.*\n\n"
-                                "📸 *¿Cómo trabajar conmigo?:*\n"
-                                "1. Sube tus carpetas a Google Drive `TejaVuh Photo`.\n"
-                                "2. Envíame cualquier mensaje o `/sync`.\n"
-                                "3. Escanearé tus carpetas y crearé las galerías sin duplicados en Notion."
-                            )
-                            send_telegram_message(chat_id, msg)
-                            continue
-
-                        # Trigger background processing so Telegram never timeouts
-                        threading.Thread(target=process_sync_async, args=(chat_id,), daemon=True).start()
-
+                            send_telegram_message(chat_id, "👋 Envía /sync o cualquier texto para sincronizar.")
+                        else:
+                            process_sync_async(chat_id)
         except Exception as e:
-            print(f"⚠️ Error en Photo Bot: {e}")
             time.sleep(2)
-
         time.sleep(0.5)
 
 def start_bot():
