@@ -103,8 +103,7 @@ def create_notion_page(title, folder_id, count, first_thumb):
         "properties": {
             "Название Фотосессии": {"title": [{"type": "text", "text": {"content": title}}]},
             "Ссылка на Google Диск": {"url": folder_url},
-            "Количество Фото": {"number": count},
-            "Статус": {"select": {"name": "Превью Готовы 📸"}}
+            "Статус Обработки": {"select": {"name": "Превью Готовы 📸"}}
         },
         "children": [
             {
