@@ -9,10 +9,10 @@ import threading
 from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8878684146:AAG-WKGi9z_oUeUkgHYylF2TnzKRwqrA0ng")
-NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "ntn_" + "261270948384dzEroLYe0I68u6AU72CW5RRU7YWHshM4Eu")
-NOTION_INBOX_ID = os.environ.get("NOTION_INBOX_ID", "3a76154bd4368016858ec7ef7b8afebc")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ." + "Ab8RN6LchXqGxtyxGl71ZocNNXOcnIlKj3_Xe2esHM4_R4HisQ")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+NOTION_API_KEY = os.environ.get("NOTION_API_KEY")
+NOTION_INBOX_ID = os.environ.get("NOTION_INBOX_ID")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 ctx = ssl.create_default_context()
 ctx.check_hostname = False
@@ -79,160 +79,172 @@ def transcribe_audio_gemini(oga_bytes):
                             if text:
                                 return text
             except Exception as e:
-                print(f"⚠️ Error en modelo {model_name}: {e}")
-                time.sleep(0.5)
-    return None
-
-def download_telegram_file(file_path):
-    url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
-    req = urllib.request.Request(url)
-    try:
-        with urllib.request.urlopen(req, context=ctx) as response:
-            return response.read()
-    except Exception as e:
-        print(f"❌ Error descargando archivo {file_path}: {e}")
-        return None
-
-def get_telegram_file_path(file_id):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile?file_id={file_id}"
-    req = urllib.request.Request(url)
-    try:
-        with urllib.request.urlopen(req, context=ctx) as response:
-            res = json.loads(response.read().decode("utf-8"))
-            if res.get("ok"):
-                return res.get("result", {}).get("file_path")
-    except Exception as e:
-        print(f"❌ Error obteniendo file_path: {e}")
-    return None
-
-def add_item_to_notion_inbox(text, source_type="text", msg_timestamp=None, sender_name=None):
-    url = f"https://api.notion.com/v1/blocks/{NOTION_INBOX_ID}/children"
-    headers = {
-        "Authorization": f"Bearer {NOTION_API_KEY}",
-        "Notion-Version": "2022-06-28",
-        "Content-Type": "application/json"
-    }
-
-    icon_emoji = "💡" if source_type == "text" else "🎙️"
-    
-    if msg_timestamp:
-        dt = datetime.fromtimestamp(msg_timestamp, tz=timezone(timedelta(hours=-5)))
-    else:
-        dt = datetime.now(tz=timezone(timedelta(hours=-5)))
-
-    now_str = dt.strftime("%d.%m %H:%M")
-    author_prefix = f" [{sender_name}]" if sender_name else ""
-    bullet_text = f"{icon_emoji} [{now_str}]{author_prefix} {text}"
-
-    payload = {
-        "children": [
-            {
-                "object": "block",
-                "type": "to_do",
-                "to_do": {
-                    "rich_text": [
-                        {"type": "text", "text": {"content": bullet_text}}
-                    ],
-                    "checked": False
-                }
-            }
-        ]
-    }
-
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers=headers, method="PATCH")
-
-    try:
-        with urllib.request.urlopen(req, context=ctx) as response:
-            if response.status in (200, 201):
-                print(f"✅ Guardado en Notion Inbox: {bullet_text}")
-                return True
-    except Exception as e:
-        print(f"❌ Error al enviar a Notion: {e}")
-        return False
+                time.sleep(1)
+                
+    return "[Error en la transcripción de audio (Gemini falló)]"
 
 def send_telegram_message(chat_id, text):
+    if not TELEGRAM_TOKEN:
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     headers = {"Content-Type": "application/json"}
     payload = {
         "chat_id": chat_id,
-        "text": text
+        "text": text,
+        "parse_mode": "Markdown"
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         urllib.request.urlopen(req, context=ctx)
     except Exception as e:
-        print(f"❌ Error al enviar mensaje a Telegram: {e}")
+        print(f"Error enviando a Telegram: {e}")
 
-def process_voice_async(chat_id, file_id, msg_date, sender_name):
-    send_telegram_message(chat_id, "🎙️ Transcribiendo mensaje de voz...")
-    file_path = get_telegram_file_path(file_id)
-    if file_path:
-        audio_bytes = download_telegram_file(file_path)
-        if audio_bytes:
-            transcribed_text = transcribe_audio_gemini(audio_bytes)
-            if transcribed_text:
-                add_item_to_notion_inbox(transcribed_text, "voice", msg_date, sender_name)
-                send_telegram_message(chat_id, f"✅ ¡Nota de voz transcribida y guardada en Notion Inbox!\n\n🎙️ {transcribed_text}")
-            else:
-                fallback = "Nota de voz (no se pudo reconocer la voz)"
-                add_item_to_notion_inbox(fallback, "voice", msg_date, sender_name)
-                send_telegram_message(chat_id, "⚠️ Se guardó la nota de voz, pero no se pudo transcribir el audio.")
+def create_notion_inbox_item(text):
+    if not NOTION_API_KEY or not NOTION_INBOX_ID:
+        return None
+        
+    url = "https://api.notion.com/v1/pages"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    
+    # Check if text is a link
+    is_link = text.startswith("http://") or text.startswith("https://")
+    
+    # Create an emoji based on content type
+    icon_emoji = "🔗" if is_link else "📝"
+    
+    # Use first sentence as title, rest as body
+    lines = text.split('\n', 1)
+    title = lines[0][:50] + ("..." if len(lines[0]) > 50 else "")
+    
+    payload = {
+        "parent": {"type": "database_id", "database_id": NOTION_INBOX_ID},
+        "icon": {"type": "emoji", "emoji": icon_emoji},
+        "properties": {
+            "Имя": {
+                "title": [
+                    {
+                        "text": {
+                            "content": title
+                        }
+                    }
+                ]
+            }
+        },
+        "children": [
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": text,
+                                "link": {"url": text} if is_link else None
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, context=ctx) as response:
+            res = json.loads(response.read().decode("utf-8"))
+            return res.get("url")
+    except Exception as e:
+        print(f"Error creando en Notion: {e}")
+        return None
+
+def download_telegram_file(file_id):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile?file_id={file_id}"
+    req = urllib.request.Request(url)
+    try:
+        with urllib.request.urlopen(req, context=ctx) as response:
+            res = json.loads(response.read().decode("utf-8"))
+            file_path = res.get("result", {}).get("file_path")
+            
+            if file_path:
+                dl_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
+                dl_req = urllib.request.Request(dl_url)
+                with urllib.request.urlopen(dl_req, context=ctx) as dl_res:
+                    return dl_res.read()
+    except Exception as e:
+        print(f"Error descargando archivo de Telegram: {e}")
+    return None
+
+def process_update(update):
+    message = update.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    
+    if not chat_id:
+        return
+
+    text_to_save = ""
+
+    if "text" in message:
+        text = message["text"].strip()
+        if text.startswith("/start"):
+            send_telegram_message(chat_id, "👋 ¡Hola! Soy el bot de captura rápida de TEJA VUH.\n\nEnvíame texto, enlaces o notas de voz y los guardaré directamente en tu bandeja de entrada de Notion (INBOX).")
+            return
         else:
-            send_telegram_message(chat_id, "❌ No se pudo descargar el archivo de audio.")
-    else:
-        send_telegram_message(chat_id, "❌ No se pudo obtener el archivo del servidor de Telegram.")
+            text_to_save = text
+
+    elif "voice" in message:
+        send_telegram_message(chat_id, "🎙️ Transcribiendo audio...")
+        file_id = message["voice"]["file_id"]
+        oga_bytes = download_telegram_file(file_id)
+        if oga_bytes:
+            text_to_save = transcribe_audio_gemini(oga_bytes)
+            send_telegram_message(chat_id, f"📝 *Transcripción:*\n_{text_to_save}_")
+        else:
+            send_telegram_message(chat_id, "❌ Error descargando el audio.")
+            return
+
+    if text_to_save:
+        notion_url = create_notion_inbox_item(text_to_save)
+        if notion_url:
+            send_telegram_message(chat_id, f"✅ Guardado en Notion:\n[Abrir en Notion]({notion_url})")
+        else:
+            send_telegram_message(chat_id, "❌ Error guardando en Notion.")
 
 def run_telegram_bot():
-    print("🚀 Bot en la nube TEJA VUH 24/7 (Modo 100% Вечный Неусыпаемый) iniciado!")
+    print("🚀 TEJA VUH Ideas Bot (Voice + Text -> Notion) iniciado!")
     offset = 0
     while True:
         try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?offset={offset}&timeout=10"
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?offset={offset}&timeout=30"
             req = urllib.request.Request(url)
             with urllib.request.urlopen(req, context=ctx) as response:
                 res = json.loads(response.read().decode("utf-8"))
                 updates = res.get("result", [])
+                
                 for update in updates:
                     offset = update["update_id"] + 1
-                    message = update.get("message", {})
-                    chat_id = message.get("chat", {}).get("id")
-                    msg_date = message.get("date")
-                    sender_name = message.get("from", {}).get("first_name") or "Usuario"
+                    # Procesar cada mensaje en un hilo separado para no bloquear
+                    threading.Thread(target=process_update, args=(update,), daemon=True).start()
                     
-                    if not chat_id:
-                        continue
-
-                    # 1. Текстовые сообщения
-                    if "text" in message:
-                        user_text = message["text"]
-                        if user_text.startswith("/start"):
-                            send_telegram_message(chat_id, "👋 ¡Hola! Soy tu asistente de voz de IA para TEJA VUH.\n\nEnvía mensajes de voz o escribe notas en texto. ¡Transcribiré tu voz y guardaré una nota ordenada en tu Notion Inbox!")
-                            continue
-                        
-                        if add_item_to_notion_inbox(user_text, "text", msg_date, sender_name):
-                            send_telegram_message(chat_id, f"✅ ¡Nota de texto guardada en Notion Inbox!\n\n💡 {user_text}")
-
-                    # 2. Голосовые сообщения (запуск в фоновом потоке)
-                    elif "voice" in message or "audio" in message:
-                        voice_info = message.get("voice") or message.get("audio")
-                        file_id = voice_info.get("file_id")
-                        threading.Thread(target=process_voice_async, args=(chat_id, file_id, msg_date, sender_name), daemon=True).start()
-
         except Exception as e:
-            print(f"⚠️ Ошибка поллинга: {e}")
             time.sleep(2)
-
-        time.sleep(0.5)
-
-def start_bot():
-    threading.Thread(target=run_telegram_bot, daemon=True).start()
+        time.sleep(1)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Running Health Check Server on port {port}...")
-    start_bot()
+    
+    # Iniciar bot en hilo secundario
+    threading.Thread(target=run_telegram_bot, daemon=True).start()
+    
+    # Keep alive para Render
     threading.Thread(target=self_keep_alive, args=(port,), daemon=True).start()
+
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()

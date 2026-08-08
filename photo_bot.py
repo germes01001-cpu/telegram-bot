@@ -212,7 +212,7 @@ def get_folder_items(service, folder_id):
     while True:
         results = service.files().list(
             q=f"'{folder_id}' in parents and trashed = false",
-            fields="nextPageToken, files(id, name, mimeType, thumbnailLink)",
+            fields="nextPageToken, files(id, name, mimeType, thumbnailLink, webContentLink)",
             pageToken=page_token,
             pageSize=1000
         ).execute()
@@ -247,9 +247,8 @@ def build_hierarchy(service, folder_id, folder_name, depth=2):
         })
         
     for i, photo in enumerate(photos):
-        thumb = photo.get('thumbnailLink', '').replace('=s220', '=w400')
-        if not thumb:
-            thumb = f"https://drive.google.com/thumbnail?id={photo['id']}&sz=w400"
+        web_link = photo.get('webContentLink', '')
+        thumb = web_link if web_link else f"https://drive.google.com/uc?export=download&id={photo['id']}"
         single_file_url = f"https://drive.google.com/file/d/{photo['id']}/view?usp=sharing"
         blocks.append({
             "object": "block",
