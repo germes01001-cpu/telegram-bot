@@ -216,7 +216,7 @@ def process_update(update):
         else:
             send_telegram_message(chat_id, "❌ Error guardando en Notion.")
 
-def run_telegram_bot():
+def start_bot():
     print("🚀 TEJA VUH Ideas Bot (Voice + Text -> Notion) iniciado!")
     offset = 0
     while True:
