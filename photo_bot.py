@@ -222,69 +222,106 @@ def get_folder_items(service, folder_id):
             break
     return items
 
-def build_hierarchy(service, folder_id, folder_name, depth=2):
+class FolderNode:
+    def __init__(self, name, f_id):
+        self.name = name
+        self.id = f_id
+        self.photos = []
+        self.subfolders = []
+        self.total_photos = 0
+
+    def get_first_photo_url(self):
+        if self.photos:
+            p = self.photos[0]
+            w = p.get('webContentLink', '')
+            return w if w else f"https://drive.google.com/uc?export=download&id={p['id']}"
+        for sub in self.subfolders:
+            url = sub.get_first_photo_url()
+            if url: return url
+        return ""
+
+def build_memory_tree(service, folder_id, folder_name):
+    node = FolderNode(folder_name, folder_id)
     items = get_folder_items(service, folder_id)
-    photos = []
-    folders = []
     
     for item in items:
         if item['mimeType'] == 'application/vnd.google-apps.folder':
-            folders.append(item)
+            sub_node = build_memory_tree(service, item['id'], item['name'])
+            node.subfolders.append(sub_node)
+            node.total_photos += sub_node.total_photos
         elif item['mimeType'].startswith('image/'):
-            photos.append(item)
+            node.photos.append(item)
             
-    # Process subfolders recursively first
-    sub_blocks = []
-    total_sub_photos = 0
-    for folder in folders:
-        s_blocks, s_photos = build_hierarchy(service, folder['id'], folder['name'], depth + 1)
-        sub_blocks.extend(s_blocks)
-        total_sub_photos += s_photos
+    node.total_photos += len(node.photos)
+    return node
+
+def append_single_block_get_id(parent_id, block):
+    url = f"https://api.notion.com/v1/blocks/{parent_id}/children"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+    data = json.dumps({"children": [block]}).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers, method="PATCH")
+    try:
+        with urllib.request.urlopen(req, context=ctx) as response:
+            res = json.loads(response.read().decode("utf-8"))
+            if res.get('results'):
+                return res['results'][0]['id']
+            return None
+    except Exception as e:
+        error_detail = e.read().decode("utf-8") if hasattr(e, 'read') else str(e)
+        send_debug(f"ERROR appending block: {error_detail}")
+        return None
+
+def sync_node_to_notion(node, notion_parent_id, depth):
+    if node.total_photos == 0 and depth > 1:
+        return
         
-    total_photos = len(photos) + total_sub_photos
+    current_parent_id = notion_parent_id
     
-    # Skip empty folder branches
-    if total_photos == 0 and depth > 1:
-        return [], 0
-        
-    blocks = []
-    
-    # Generate heading with correct total
     if depth > 1:
         heading_type = f"heading_{min(depth, 3)}"
         prefix = "📁 " if depth == 2 else ("📂 " if depth == 3 else "📄 ")
-        blocks.append({
+        block = {
             "object": "block",
             "type": heading_type,
             heading_type: {
-                "rich_text": [{"type": "text", "text": {"content": f"{prefix}{folder_name} ({total_photos} fotos)"}}]
+                "rich_text": [{"type": "text", "text": {"content": f"{prefix}{node.name} ({node.total_photos} fotos)"}}],
+                "is_toggleable": True
             }
-        })
-        
-    for i, photo in enumerate(photos):
+        }
+        new_id = append_single_block_get_id(notion_parent_id, block)
+        if new_id:
+            current_parent_id = new_id
+            
+    photo_blocks = []
+    for i, photo in enumerate(node.photos):
         web_link = photo.get('webContentLink', '')
         thumb = web_link if web_link else f"https://drive.google.com/uc?export=download&id={photo['id']}"
         single_file_url = f"https://drive.google.com/file/d/{photo['id']}/view?usp=sharing"
-        blocks.append({
+        photo_blocks.append({
             "object": "block",
             "type": "image",
             "image": {"type": "external", "external": {"url": thumb}}
         })
-        blocks.append({
+        photo_blocks.append({
             "object": "block",
             "type": "paragraph",
             "paragraph": {
                 "rich_text": [
-                    {"type": "text", "text": {"content": f"Foto #{i+1} de {len(photos)} en {folder_name} | "}},
+                    {"type": "text", "text": {"content": f"Foto #{i+1} de {len(node.photos)} en {node.name} | "}},
                     {"type": "text", "text": {"content": "Abrir / Descargar", "link": {"url": single_file_url}}}
                 ]
             }
         })
-
-    # Add subfolder blocks
-    blocks.extend(sub_blocks)
         
-    return blocks, total_photos
+    if photo_blocks:
+        append_notion_blocks(current_parent_id, photo_blocks)
+        
+    for subfolder in node.subfolders:
+        sync_node_to_notion(subfolder, current_parent_id, depth + 1)
 
 def sync_all(chat_id):
     global DEBUG_CHAT_ID
@@ -361,18 +398,13 @@ def sync_all(chat_id):
             
             send_telegram_message(chat_id, f"Syncing: {s_name}...")
             
-            blocks, total_photos = build_hierarchy(service, s_id, s_name, depth=1)
-            
-            first_thumb = ""
-            for b in blocks:
-                if b["type"] == "image":
-                    first_thumb = b["image"]["external"]["url"]
-                    break
+            tree_node = build_memory_tree(service, s_id, s_name)
+            first_thumb = tree_node.get_first_photo_url()
                     
-            p_id = create_notion_page(s_name, s_id, total_photos, first_thumb)
+            p_id = create_notion_page(s_name, s_id, tree_node.total_photos, first_thumb)
             if p_id:
-                append_notion_blocks(p_id, blocks)
-                synced_names.append(f"NEW: {s_name} ({total_photos} fotos)")
+                sync_node_to_notion(tree_node, p_id, depth=1)
+                synced_names.append(f"NEW: {s_name} ({tree_node.total_photos} fotos)")
             else:
                 synced_names.append(f"FAILED: {s_name}")
                 
