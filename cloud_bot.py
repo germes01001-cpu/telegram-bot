@@ -216,7 +216,9 @@ def process_update(update):
         else:
             send_telegram_message(chat_id, "❌ Error guardando en Notion.")
 
-def start_bot():
+import threading
+
+def run_cloud_bot():
     print("🚀 TEJA VUH Ideas Bot (Voice + Text -> Notion) iniciado!")
     offset = 0
     while True:
@@ -236,12 +238,15 @@ def start_bot():
             time.sleep(2)
         time.sleep(1)
 
+def start_bot():
+    threading.Thread(target=run_cloud_bot, daemon=True).start()
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Running Health Check Server on port {port}...")
     
     # Iniciar bot en hilo secundario
-    threading.Thread(target=run_telegram_bot, daemon=True).start()
+    start_bot()
     
     # Keep alive para Render
     threading.Thread(target=self_keep_alive, args=(port,), daemon=True).start()
