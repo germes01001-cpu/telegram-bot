@@ -233,8 +233,7 @@ class FolderNode:
     def get_first_photo_url(self):
         if self.photos:
             p = self.photos[0]
-            w = p.get('webContentLink', '')
-            return w if w else f"https://drive.google.com/uc?export=download&id={p['id']}"
+            return f"https://lh3.googleusercontent.com/d/{p['id']}"
         for sub in self.subfolders:
             url = sub.get_first_photo_url()
             if url: return url
@@ -298,8 +297,8 @@ def sync_node_to_notion(node, notion_parent_id, depth):
             
     photo_blocks = []
     for i, photo in enumerate(node.photos):
-        web_link = photo.get('webContentLink', '')
-        thumb = web_link if web_link else f"https://drive.google.com/uc?export=download&id={photo['id']}"
+        # Use direct image link workaround for Google Drive
+        thumb = f"https://lh3.googleusercontent.com/d/{photo['id']}"
         single_file_url = f"https://drive.google.com/file/d/{photo['id']}/view?usp=sharing"
         photo_blocks.append({
             "object": "block",
